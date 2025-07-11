@@ -1,0 +1,318 @@
+# ==================================================
+# Path: E:\Dai Hoc\NCKH\mrc-simulation
+# Detected tech: java, javascript, rust, typescript
+# ==================================================
+
+## DIRECTORY STRUCTURE
+```
+mrc-simulation/
+├── contracts/
+│   ├── Lock.sol
+│   └── RelayRegistry.sol
+├── ignition/
+│   └── modules/
+│       └── Lock.js
+├── node_modules/
+├── script/
+│   ├── deploy.js
+│   └── stimulation.js
+├── test/
+│   └── Lock.js
+├── .gitignore
+├── README.md
+├── hardhat.config.js
+├── package-lock.json
+└── package.json
+```
+
+## FILE CONTENTS
+
+### hardhat.config.js
+```js
+require("@nomicfoundation/hardhat-toolbox");
+
+/** @type import('hardhat/config').HardhatUserConfig */
+module.exports = {
+  solidity: "0.8.24",
+  networks: {
+    hardhat: {},
+    relayChain1: {
+      url: "http://127.0.0.1:8545",
+      accounts: ['0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80']
+    },
+    relayChain2: {
+      url: "http://127.0.0.1:8546",
+      accounts: ['0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d']
+    },
+    relayChain3: {
+      url: "http://127.0.0.1:8547",
+      accounts: ['0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a']
+    }
+  }
+};
+
+```
+
+### ignition\modules\Lock.js
+```js
+// This setup uses Hardhat Ignition to manage smart contract deployments.
+// Learn more about it at https://hardhat.org/ignition
+
+const { buildModule } = require("@nomicfoundation/hardhat-ignition/modules");
+
+const JAN_1ST_2030 = 1893456000;
+const ONE_GWEI = 1_000_000_000n;
+
+module.exports = buildModule("LockModule", (m) => {
+  const unlockTime = m.getParameter("unlockTime", JAN_1ST_2030);
+  const lockedAmount = m.getParameter("lockedAmount", ONE_GWEI);
+
+  const lock = m.contract("Lock", [unlockTime], {
+    value: lockedAmount,
+  });
+
+  return { lock };
+});
+
+```
+
+### script\deploy.js
+```js
+const hre = require("hardhat");
+
+async function main() {
+  const [deployer] = await hre.ethers.getSigners();
+  console.log("Deploying contracts with the account:", deployer.address);
+
+  const relayRegistry = await hre.ethers.deployContract("RelayRegistry");
+  await relayRegistry.waitForDeployment();
+
+  console.log(`RelayRegistry deployed to: ${relayRegistry.target}`);
+
+  const fs = require('fs');
+  fs.writeFileSync('./registry-address.json', JSON.stringify({ address: relayRegistry.target }));
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+
+```
+
+### script\stimulation.js
+```js
+const { ethers } = require("hardhat");
+const registryAddress = require('../registry-address.json').address;
+
+const RELAY_CHAINS = [
+  { name: 'RelayChain1', url: 'http://127.0.0.1:8545', load: 0 },
+  { name: 'RelayChain2', url: 'http://127.0.0.1:8546', load: 0 },
+  { name: 'RelayChain3', url: 'http://127.0.0.1:8547', load: 0 },
+];
+
+let currentRelayIndex = 0;
+function selectRelay_RoundRobin() {
+  const selected = RELAY_CHAINS[currentRelayIndex];
+  currentRelayIndex = (currentRelayIndex + 1) % RELAY_CHAINS.length;
+  return selected;
+}
+
+function selectRelay_LeastLoad() {
+  return RELAY_CHAINS.reduce((prev, curr) => (prev.load < curr.load ? prev : curr));
+}
+
+async function main() {
+  console.log("🚀 Starting MRC Simulation...");
+
+  for (const chain of RELAY_CHAINS) {
+    try {
+      chain.provider = new ethers.JsonRpcProvider(chain.url);
+      await chain.provider.getNetwork();
+      console.log(`✅ Connected to ${chain.name}`);
+    } catch (e) {
+      console.error(`❌ Failed to connect to ${chain.name}. Is the node running?`);
+      RELAY_CHAINS.splice(RELAY_CHAINS.indexOf(chain), 1);
+    }
+  }
+
+  if (RELAY_CHAINS.length === 0) {
+    console.error("No relay chains available. Exiting.");
+    return;
+  }
+
+  const mainProvider = RELAY_CHAINS[0].provider;
+  const registry = await ethers.getContractAt("RelayRegistry", registryAddress, await mainProvider.getSigner());
+  console.log(`\n🔗 Connected to RelayRegistry at ${registryAddress}`);
+
+  const SOURCE_CHAIN_ID = "SourceChain-A";
+  const NUM_TRANSACTIONS = 20;
+  console.log(`\n🔄 Simulating ${NUM_TRANSACTIONS} cross-chain transactions from ${SOURCE_CHAIN_ID}...\n`);
+
+  for (let i = 1; i <= NUM_TRANSACTIONS; i++) {
+    console.log(`--- Transaction #${i} ---`);
+
+    const selectedRelay = selectRelay_LeastLoad(); // hoặc selectRelay_RoundRobin();
+
+    console.log(`⚖️  Load Balancer selected: ${selectedRelay.name} (current load: ${selectedRelay.load})`);
+
+    try {
+      const signer = await selectedRelay.provider.getSigner();
+      const tx = await signer.sendTransaction({
+        to: signer.address,
+        value: ethers.parseEther("0.001")
+      });
+      await tx.wait();
+      console.log(`📬 Proof for tx #${i} submitted to ${selectedRelay.name}. Tx hash: ${tx.hash}`);
+      selectedRelay.load++;
+    } catch (e) {
+      console.error(`🔥 Error submitting proof to ${selectedRelay.name}: ${e.message}`);
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+
+  console.log("\n--- SIMULATION COMPLETE ---");
+  console.log("📊 Final Load Distribution:");
+  RELAY_CHAINS.forEach(chain => {
+    console.log(`  - ${chain.name}: ${chain.load} transactions`);
+  });
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+
+```
+
+### test\Lock.js
+```js
+const {
+  time,
+  loadFixture,
+} = require("@nomicfoundation/hardhat-toolbox/network-helpers");
+const { anyValue } = require("@nomicfoundation/hardhat-chai-matchers/withArgs");
+const { expect } = require("chai");
+
+describe("Lock", function () {
+  // We define a fixture to reuse the same setup in every test.
+  // We use loadFixture to run this setup once, snapshot that state,
+  // and reset Hardhat Network to that snapshot in every test.
+  async function deployOneYearLockFixture() {
+    const ONE_YEAR_IN_SECS = 365 * 24 * 60 * 60;
+    const ONE_GWEI = 1_000_000_000;
+
+    const lockedAmount = ONE_GWEI;
+    const unlockTime = (await time.latest()) + ONE_YEAR_IN_SECS;
+
+    // Contracts are deployed using the first signer/account by default
+    const [owner, otherAccount] = await ethers.getSigners();
+
+    const Lock = await ethers.getContractFactory("Lock");
+    const lock = await Lock.deploy(unlockTime, { value: lockedAmount });
+
+    return { lock, unlockTime, lockedAmount, owner, otherAccount };
+  }
+
+  describe("Deployment", function () {
+    it("Should set the right unlockTime", async function () {
+      const { lock, unlockTime } = await loadFixture(deployOneYearLockFixture);
+
+      expect(await lock.unlockTime()).to.equal(unlockTime);
+    });
+
+    it("Should set the right owner", async function () {
+      const { lock, owner } = await loadFixture(deployOneYearLockFixture);
+
+      expect(await lock.owner()).to.equal(owner.address);
+    });
+
+    it("Should receive and store the funds to lock", async function () {
+      const { lock, lockedAmount } = await loadFixture(
+        deployOneYearLockFixture
+      );
+
+      expect(await ethers.provider.getBalance(lock.target)).to.equal(
+        lockedAmount
+      );
+    });
+
+    it("Should fail if the unlockTime is not in the future", async function () {
+      // We don't use the fixture here because we want a different deployment
+      const latestTime = await time.latest();
+      const Lock = await ethers.getContractFactory("Lock");
+      await expect(Lock.deploy(latestTime, { value: 1 })).to.be.revertedWith(
+        "Unlock time should be in the future"
+      );
+    });
+  });
+
+  describe("Withdrawals", function () {
+    describe("Validations", function () {
+      it("Should revert with the right error if called too soon", async function () {
+        const { lock } = await loadFixture(deployOneYearLockFixture);
+
+        await expect(lock.withdraw()).to.be.revertedWith(
+          "You can't withdraw yet"
+        );
+      });
+
+      it("Should revert with the right error if called from another account", async function () {
+        const { lock, unlockTime, otherAccount } = await loadFixture(
+          deployOneYearLockFixture
+        );
+
+        // We can increase the time in Hardhat Network
+        await time.increaseTo(unlockTime);
+
+        // We use lock.connect() to send a transaction from another account
+        await expect(lock.connect(otherAccount).withdraw()).to.be.revertedWith(
+          "You aren't the owner"
+        );
+      });
+
+      it("Shouldn't fail if the unlockTime has arrived and the owner calls it", async function () {
+        const { lock, unlockTime } = await loadFixture(
+          deployOneYearLockFixture
+        );
+
+        // Transactions are sent using the first signer by default
+        await time.increaseTo(unlockTime);
+
+        await expect(lock.withdraw()).not.to.be.reverted;
+      });
+    });
+
+    describe("Events", function () {
+      it("Should emit an event on withdrawals", async function () {
+        const { lock, unlockTime, lockedAmount } = await loadFixture(
+          deployOneYearLockFixture
+        );
+
+        await time.increaseTo(unlockTime);
+
+        await expect(lock.withdraw())
+          .to.emit(lock, "Withdrawal")
+          .withArgs(lockedAmount, anyValue); // We accept any value as `when` arg
+      });
+    });
+
+    describe("Transfers", function () {
+      it("Should transfer the funds to the owner", async function () {
+        const { lock, unlockTime, lockedAmount, owner } = await loadFixture(
+          deployOneYearLockFixture
+        );
+
+        await time.increaseTo(unlockTime);
+
+        await expect(lock.withdraw()).to.changeEtherBalances(
+          [owner, lock],
+          [lockedAmount, -lockedAmount]
+        );
+      });
+    });
+  });
+});
+
+```
