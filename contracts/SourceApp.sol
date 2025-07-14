@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 contract SourceApp {
     event MessagePosted(address indexed sender, string message);
-    event ContextSent(address indexed to, bytes data);
+    event ContextSent(address to, bytes data, uint256 nonce);
 
     uint256 public nonce;
 

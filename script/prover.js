@@ -1,8 +1,6 @@
 const { ethers } = require("ethers");
 
-// Giả lập độ trễ tạo proof (ms)
 const DEFAULT_DELAY_MS = 300;
-
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -15,30 +13,26 @@ function sleep(ms) {
  */
 async function generateProof(transaction, type = 'SC2RC') {
   const start = Date.now();
-
-  // Giả lập độ trễ tạo proof
   await sleep(DEFAULT_DELAY_MS);
 
-  const rawData = JSON.stringify({
-    source: transaction.source || transaction.from || 'unknown',
-    target: transaction.target || transaction.to || 'unknown',
-    value: transaction.value || 0,
-    nonce: transaction.nonce || 0,
-    type,
-    timestamp: Date.now()
-  });
+  // Kết hợp cả from + data để proof xác thực được
+  const from = transaction.source || transaction.from; // tùy từng nơi gọi
+  const data = transaction.data;
 
-  const proofHash = ethers.keccak256(ethers.toUtf8Bytes(rawData));
+  const proofHash = ethers.keccak256(
+    ethers.solidityPacked(['address', 'bytes'], [from, data])
+  );
+    console.log("From:", from);
+    console.log("Data:", data);
+    console.log("ProofHash:", proofHash);
 
-  const proof = {
+
+  return {
     proofHash,
     createdAt: new Date().toISOString(),
     elapsedMs: Date.now() - start,
-    proofType: type,
-    rawData
+    proofType: type
   };
-
-  return proof;
 }
 
 module.exports = {

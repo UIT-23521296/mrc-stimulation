@@ -39,7 +39,7 @@ const ADAPTIVE_CONFIG = {
   LEARNING: {
     HISTORY_SIZE: 50,
     DECAY_FACTOR: 0.95,         // Weight decay for old data
-    MIN_SAMPLES: 5              // Minimum samples before calculating
+    MIN_SAMPLES: 1              // Minimum samples before calculating
   }
 };
 
@@ -374,3 +374,4 @@ module.exports = {
   ADAPTIVE_CONFIG,
   computeWeight
 };
+

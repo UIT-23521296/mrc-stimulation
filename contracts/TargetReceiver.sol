@@ -2,14 +2,27 @@
 pragma solidity ^0.8.24;
 
 contract TargetReceiver {
-    event MessageReceived(address indexed sender, string message);
+    event ReceivedFromRelay(address indexed from, bytes data, bytes32 proofHash);
+    event VerifiedAndExecuted(address indexed from, bytes data);
+    event DebugProof(bytes32 proofHash, bytes32 computed);
 
-    string public lastMessage;
-    address public lastSender;
+    mapping(bytes32 => bool) public receivedProofs;
 
-    function receiveMessage(string calldata message) external {
-        lastMessage = message;
-        lastSender = msg.sender;
-        emit MessageReceived(msg.sender, message);
+    /// @notice Nhận dữ liệu từ RC kèm theo proof
+    function receiveRelay(address from, bytes calldata data, bytes32 proofHash) external {
+        require(data.length > 0, "Empty data");
+
+        bytes32 expected = keccak256(abi.encodePacked(from, data));
+        emit DebugProof(proofHash, expected);
+
+        require(proofHash == expected, "Proof mismatch");
+        require(!receivedProofs[proofHash], "Replay detected");
+
+        receivedProofs[proofHash] = true;
+
+        emit ReceivedFromRelay(from, data, proofHash);
+
+        // Giả lập xử lý
+        emit VerifiedAndExecuted(from, data);
     }
 }

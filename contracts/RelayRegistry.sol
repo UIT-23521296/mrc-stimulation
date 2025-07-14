@@ -33,8 +33,5 @@ contract RelayRegistry {
 
     function relayFromSource(address targetReceiver, bytes calldata data, bytes32 proofHash) external {
         emit RelayedFromSource(msg.sender, targetReceiver, data, proofHash);
-
-        // Gọi đến TargetReceiver trên DC
-        ITargetReceiver(targetReceiver).receiveRelay(msg.sender, data, proofHash);
     }
 }

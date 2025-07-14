@@ -1,4 +1,5 @@
 const hre = require("hardhat");
+const fs = require("fs");
 
 async function main() {
   const [deployer] = await hre.ethers.getSigners();
@@ -7,10 +8,14 @@ async function main() {
   const relayRegistry = await hre.ethers.deployContract("RelayRegistry");
   await relayRegistry.waitForDeployment();
 
-  console.log(`RelayRegistry deployed to: ${relayRegistry.target}`);
+  const address = await relayRegistry.getAddress();
+  console.log(`RelayRegistry deployed to: ${address}`);
 
-  const fs = require('fs');
-  fs.writeFileSync('./registry-address.json', JSON.stringify({ address: relayRegistry.target }));
+  // Ghi đúng vào thư mục theo tên mạng
+  const networkName = hre.network.name;
+  const path = `./deployments/${networkName}`;
+  fs.mkdirSync(path, { recursive: true });
+  fs.writeFileSync(`${path}/RelayRegistry.json`, JSON.stringify({ address }, null, 2));
 }
 
 main().catch((error) => {

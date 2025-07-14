@@ -6,26 +6,84 @@
 ## DIRECTORY STRUCTURE
 ```
 mrc-simulation/
+├── .git/
+├── artifacts/
+│   ├── build-info/
+│   │   ├── 86f3e3a56581c3075b2c7d67f0a06a36.json
+│   │   └── be2fa38bc0510f8ff4f813936024fc11.json
+│   └── contracts/
+│       ├── RelayRegistry.sol/
+│       │   ├── ITargetReceiver.dbg.json
+│       │   ├── ITargetReceiver.json
+│       │   ├── RelayRegistry.dbg.json
+│       │   └── RelayRegistry.json
+│       ├── SourceApp.sol/
+│       │   ├── SourceApp.dbg.json
+│       │   └── SourceApp.json
+│       └── TargetReceiver.sol/
+│           ├── TargetReceiver.dbg.json
+│           └── TargetReceiver.json
+├── cache/
+│   └── solidity-files-cache.json
 ├── contracts/
-│   ├── Lock.sol
-│   └── RelayRegistry.sol
+│   ├── RelayRegistry.sol
+│   ├── SourceApp.sol
+│   └── TargetReceiver.sol
 ├── ignition/
 │   └── modules/
 │       └── Lock.js
 ├── node_modules/
+├── relay-algorithms/
+│   ├── adaptiveProperties.js
+│   ├── hybridAdaptive.js
+│   ├── index.js
+│   ├── resourceBased.js
+│   ├── roundRobin.js
+│   └── wlc.js
 ├── script/
+│   ├── deployments/
+│   │   ├── destinationChain/
+│   │   │   └── TargetReceiver.json
+│   │   ├── relayChain1/
+│   │   │   └── RelayRegistry.json
+│   │   ├── relayChain2/
+│   │   │   └── RelayRegistry.json
+│   │   ├── relayChain3/
+│   │   │   └── RelayRegistry.json
+│   │   └── sourceChain/
+│   │       └── SourceApp.json
+│   ├── .env
+│   ├── deploy-dc.js
+│   ├── deploy-source.js
 │   ├── deploy.js
-│   └── stimulation.js
+│   ├── prover-rc2dc.js
+│   ├── prover-sc2rc.js
+│   ├── prover.js
+│   ├── sendCtx.js
+│   ├── simulation.js
+│   └── start-all.bat
 ├── test/
 │   └── Lock.js
+├── .env
 ├── .gitignore
+├── Luồng.docx
 ├── README.md
+├── checken.js
 ├── hardhat.config.js
 ├── package-lock.json
-└── package.json
+├── package.json
+├── registry-address.json
+└── source_dump.txt
 ```
 
 ## FILE CONTENTS
+
+### checken.js
+```js
+require("dotenv").config();
+console.log("PRIVATE_KEY =", JSON.stringify(process.env.PRIVATE_KEY));
+
+```
 
 ### hardhat.config.js
 ```js
@@ -47,7 +105,16 @@ module.exports = {
     relayChain3: {
       url: "http://127.0.0.1:8547",
       accounts: ['0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a']
+    },
+    sourceChain: {
+      url: "http://127.0.0.1:8548",
+      accounts: ['0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80']
+    },
+    destinationChain: {
+      url: "http://127.0.0.1:8549",
+      accounts: ['0x701b615bbdfb9de65240bc28bd21bbc0d996645a3dd57e7b12bc2bdf6f192c82']
     }
+
   }
 };
 
@@ -76,21 +143,758 @@ module.exports = buildModule("LockModule", (m) => {
 
 ```
 
-### script\deploy.js
+### relay-algorithms\adaptiveProperties.js
 ```js
-const hre = require("hardhat");
+const { ethers } = require("hardhat");
 
+// ⚙️ Adaptive Calculation Parameters
+const ADAPTIVE_CONFIG = {
+  // Security thresholds
+  SECURITY_THRESHOLDS: {
+    HIGH_FAILURE_RATE: 0.05,    // 5% failure rate = High security
+    MEDIUM_FAILURE_RATE: 0.15,  // 15% failure rate = Medium security
+    LOW_FAILURE_RATE: 0.30,     // 30% failure rate = Low security
+    CONSECUTIVE_FAILURE_LIMIT: 3
+  },
+  
+  // Performance thresholds
+  PERFORMANCE_THRESHOLDS: {
+    FAST_LATENCY: 200,          // < 200ms = Fast
+    NORMAL_LATENCY: 500,        // < 500ms = Normal
+    SLOW_LATENCY: 1000,         // > 1000ms = Slow
+    HIGH_THROUGHPUT: 100,       // > 100 tx/min = High throughput
+    LOW_THROUGHPUT: 10          // < 10 tx/min = Low throughput
+  },
+  
+  // Cost thresholds
+  COST_THRESHOLDS: {
+    PREMIUM_GAS_PRICE: 2000000000,    // > 2 gwei = Premium
+    STANDARD_GAS_PRICE: 1500000000,   // 1.5-2 gwei = Standard
+    ECONOMY_GAS_PRICE: 1000000000,    // < 1 gwei = Economy
+    GAS_PRICE_HISTORY_SIZE: 20
+  },
+  
+  // Capacity thresholds
+  CAPACITY_THRESHOLDS: {
+    HIGH_UTILIZATION: 0.8,      // > 80% = High utilization
+    MEDIUM_UTILIZATION: 0.5,    // 50-80% = Medium utilization
+    LOW_UTILIZATION: 0.3,       // < 30% = Low utilization
+    SAFETY_MARGIN: 0.2          // 20% safety margin
+  },
+  
+  // Learning parameters
+  LEARNING: {
+    HISTORY_SIZE: 50,
+    DECAY_FACTOR: 0.95,         // Weight decay for old data
+    MIN_SAMPLES: 1              // Minimum samples before calculating
+  }
+};
+
+// 🏆 Security Level Ranking
+const SECURITY_LEVELS = {
+  'High': 3,
+  'Medium': 2,
+  'Low': 1
+};
+
+// ⚡ Processing Speed Ranking
+const PROCESSING_SPEEDS = {
+  'Fast': 3,
+  'Normal': 2,
+  'Slow': 1
+};
+
+// �� Cost Tier Ranking
+const COST_TIERS = {
+  'Premium': 3,
+  'Standard': 2,
+  'Economy': 1
+};
+
+// 1. Hàm tính toán Security Level adaptive
+function calculateAdaptiveSecurityLevel(relay) {
+  const metrics = relay.adaptiveMetrics;
+  
+  // Tính failure rate
+  const totalAttempts = metrics.successHistory.length + metrics.failureHistory.length;
+  if (totalAttempts < ADAPTIVE_CONFIG.LEARNING.MIN_SAMPLES) {
+    return 'Medium'; // Default khi chưa đủ data
+  }
+  
+  metrics.failureRate = metrics.failureHistory.length / totalAttempts;
+  
+  // Tính security score dựa trên nhiều yếu tố
+  let securityScore = 1.0;
+  
+  // Factor 1: Failure rate
+  if (metrics.failureRate <= ADAPTIVE_CONFIG.SECURITY_THRESHOLDS.HIGH_FAILURE_RATE) {
+    securityScore *= 1.0;
+  } else if (metrics.failureRate <= ADAPTIVE_CONFIG.SECURITY_THRESHOLDS.MEDIUM_FAILURE_RATE) {
+    securityScore *= 0.8;
+  } else {
+    securityScore *= 0.5;
+  }
+  
+  // Factor 2: Consecutive failures
+  if (metrics.consecutiveFailures >= ADAPTIVE_CONFIG.SECURITY_THRESHOLDS.CONSECUTIVE_FAILURE_LIMIT) {
+    securityScore *= 0.3;
+  }
+  
+  // Factor 3: Recent failures (failures trong 1 giờ qua)
+  const oneHourAgo = Date.now() - 3600000;
+  const recentFailures = metrics.failureHistory.filter(time => time > oneHourAgo).length;
+  if (recentFailures > 0) {
+    securityScore *= (1 - recentFailures * 0.1);
+  }
+  
+  metrics.securityScore = Math.max(0.1, Math.min(1.0, securityScore));
+  
+  // Map score to security level
+  if (metrics.securityScore >= 0.8) return 'High';
+  if (metrics.securityScore >= 0.5) return 'Medium';
+  return 'Low';
+}
+
+// 2. Hàm tính toán Processing Speed adaptive
+function calculateAdaptiveProcessingSpeed(relay) {
+  const metrics = relay.adaptiveMetrics;
+  
+  if (metrics.latencyHistory.length < ADAPTIVE_CONFIG.LEARNING.MIN_SAMPLES) {
+    return 'Normal'; // Default
+  }
+  
+  // Tính average latency
+  metrics.avgLatency = metrics.latencyHistory.reduce((a, b) => a + b, 0) / metrics.latencyHistory.length;
+  
+  // Tính latency variance
+  const variance = metrics.latencyHistory.reduce((sum, latency) => {
+    return sum + Math.pow(latency - metrics.avgLatency, 2);
+  }, 0) / metrics.latencyHistory.length;
+  metrics.latencyVariance = Math.sqrt(variance);
+  
+  // Tính throughput (transactions per minute)
+  const recentSuccesses = metrics.successHistory.filter(time => 
+    time > Date.now() - 60000 // 1 phút qua
+  ).length;
+  metrics.throughput = recentSuccesses;
+  
+  // Tính performance score
+  let performanceScore = 1.0;
+  
+  // Factor 1: Average latency
+  if (metrics.avgLatency <= ADAPTIVE_CONFIG.PERFORMANCE_THRESHOLDS.FAST_LATENCY) {
+    performanceScore *= 1.0;
+  } else if (metrics.avgLatency <= ADAPTIVE_CONFIG.PERFORMANCE_THRESHOLDS.NORMAL_LATENCY) {
+    performanceScore *= 0.8;
+  } else {
+    performanceScore *= 0.5;
+  }
+  
+  // Factor 2: Latency consistency (variance thấp = tốt)
+  const normalizedVariance = Math.min(metrics.latencyVariance / metrics.avgLatency, 1.0);
+  performanceScore *= (1 - normalizedVariance * 0.3);
+  
+  // Factor 3: Throughput
+  if (metrics.throughput >= ADAPTIVE_CONFIG.PERFORMANCE_THRESHOLDS.HIGH_THROUGHPUT) {
+    performanceScore *= 1.2;
+  } else if (metrics.throughput <= ADAPTIVE_CONFIG.PERFORMANCE_THRESHOLDS.LOW_THROUGHPUT) {
+    performanceScore *= 0.7;
+  }
+  
+  metrics.performanceScore = Math.max(0.1, Math.min(1.0, performanceScore));
+  
+  // Map score to processing speed
+  if (metrics.performanceScore >= 0.8) return 'Fast';
+  if (metrics.performanceScore >= 0.5) return 'Normal';
+  return 'Slow';
+}
+
+// 3. Hàm tính toán Cost Tier adaptive
+function calculateAdaptiveCostTier(relay) {
+  const metrics = relay.adaptiveMetrics;
+  
+  if (metrics.gasPriceHistory.length < ADAPTIVE_CONFIG.LEARNING.MIN_SAMPLES) {
+    return 'Standard'; // Default
+  }
+  
+  // Tính average gas price
+  metrics.avgGasPrice = metrics.gasPriceHistory.reduce((a, b) => a + b, 0) / metrics.gasPriceHistory.length;
+  
+  // Tính gas price trend (tăng/giảm)
+  if (metrics.gasPriceHistory.length >= 2) {
+    const recent = metrics.gasPriceHistory.slice(-5);
+    const older = metrics.gasPriceHistory.slice(-10, -5);
+    const recentAvg = recent.reduce((a, b) => a + b, 0) / recent.length;
+    const olderAvg = older.reduce((a, b) => a + b, 0) / older.length;
+    metrics.gasPriceTrend = (recentAvg - olderAvg) / olderAvg;
+  }
+  
+  // Tính cost efficiency
+  const normalizedGasPrice = Math.min(metrics.avgGasPrice / ADAPTIVE_CONFIG.COST_THRESHOLDS.PREMIUM_GAS_PRICE, 1.0);
+  metrics.costEfficiency = 1 - normalizedGasPrice;
+  
+  // Tính cost score
+  let costScore = 1.0;
+  
+  // Factor 1: Average gas price
+  if (metrics.avgGasPrice <= ADAPTIVE_CONFIG.COST_THRESHOLDS.ECONOMY_GAS_PRICE) {
+    costScore *= 1.0;
+  } else if (metrics.avgGasPrice <= ADAPTIVE_CONFIG.COST_THRESHOLDS.STANDARD_GAS_PRICE) {
+    costScore *= 0.8;
+  } else {
+    costScore *= 0.5;
+  }
+  
+  // Factor 2: Gas price trend (giảm = tốt)
+  if (metrics.gasPriceTrend < -0.1) { // Giảm > 10%
+    costScore *= 1.1;
+  } else if (metrics.gasPriceTrend > 0.1) { // Tăng > 10%
+    costScore *= 0.9;
+  }
+  
+  metrics.costScore = Math.max(0.1, Math.min(1.0, costScore));
+  
+  // Map score to cost tier
+  if (metrics.costScore >= 0.8) return 'Economy';
+  if (metrics.costScore >= 0.5) return 'Standard';
+  return 'Premium';
+}
+
+// 4. Hàm tính toán Max Gas Limit adaptive
+function calculateAdaptiveMaxGasLimit(relay) {
+  const metrics = relay.adaptiveMetrics;
+  
+  // Base gas limit
+  let baseGasLimit = 20000000;
+  
+  // Tính capacity utilization
+  if (metrics.maxObservedGas > 0) {
+    metrics.capacityUtilization = metrics.currentGasUsage / metrics.maxObservedGas;
+  }
+  
+  // Tính capacity score
+  let capacityScore = 1.0;
+  
+  // Factor 1: Current utilization
+  if (metrics.capacityUtilization <= ADAPTIVE_CONFIG.CAPACITY_THRESHOLDS.LOW_UTILIZATION) {
+    capacityScore *= 1.0; // Có thể tăng gas limit
+  } else if (metrics.capacityUtilization <= ADAPTIVE_CONFIG.CAPACITY_THRESHOLDS.MEDIUM_UTILIZATION) {
+    capacityScore *= 0.8; // Giữ nguyên
+  } else {
+    capacityScore *= 0.6; // Giảm gas limit
+  }
+  
+  // Factor 2: Historical max gas usage
+  if (metrics.maxObservedGas > 0) {
+    const safetyMargin = 1 - ADAPTIVE_CONFIG.CAPACITY_THRESHOLDS.SAFETY_MARGIN;
+    baseGasLimit = Math.max(baseGasLimit, metrics.maxObservedGas / safetyMargin);
+  }
+  
+  // Factor 3: Performance impact
+  if (metrics.performanceScore < 0.5) {
+    baseGasLimit *= 0.8; // Giảm gas limit nếu performance kém
+  }
+  
+  metrics.capacityScore = Math.max(0.1, Math.min(1.0, capacityScore));
+  
+  // Đảm bảo gas limit trong khoảng hợp lý
+  return Math.max(1000000, Math.min(50000000, Math.floor(baseGasLimit)));
+}
+
+// 5. Hàm cập nhật adaptive properties
+async function updateAdaptiveProperties(relays) {
+  for (const chain of relays) {
+    if (!chain.healthy) continue;
+    
+    try {
+      // Cập nhật historical data
+      updateHistoricalData(chain);
+      
+      // Tính toán adaptive properties
+      chain.capabilities.securityLevel = calculateAdaptiveSecurityLevel(chain);
+      chain.capabilities.processingSpeed = calculateAdaptiveProcessingSpeed(chain);
+      chain.capabilities.costTier = calculateAdaptiveCostTier(chain);
+      chain.capabilities.maxGasLimit = calculateAdaptiveMaxGasLimit(chain);
+      
+      console.log(`🔄 ${chain.name} Adaptive Properties:`);
+      console.log(`   Security: ${chain.capabilities.securityLevel} (Score: ${chain.adaptiveMetrics.securityScore.toFixed(2)})`);
+      console.log(`   Speed: ${chain.capabilities.processingSpeed} (Score: ${chain.adaptiveMetrics.performanceScore.toFixed(2)})`);
+      console.log(`   Cost: ${chain.capabilities.costTier} (Score: ${chain.adaptiveMetrics.costScore.toFixed(2)})`);
+      console.log(`   Max Gas: ${chain.capabilities.maxGasLimit.toLocaleString()}`);
+      
+    } catch (error) {
+      console.error(`Error updating adaptive properties for ${chain.name}:`, error.message);
+    }
+  }
+}
+
+// 6. Hàm cập nhật historical data
+function updateHistoricalData(chain) {
+  const metrics = chain.adaptiveMetrics;
+  
+  // Cập nhật latency history
+  if (chain.latency > 0) {
+    metrics.latencyHistory.push(chain.latency);
+    if (metrics.latencyHistory.length > ADAPTIVE_CONFIG.LEARNING.HISTORY_SIZE) {
+      metrics.latencyHistory.shift();
+    }
+  }
+  
+  // Cập nhật gas price history
+  if (chain.gasPrice > 0) {
+    metrics.gasPriceHistory.push(chain.gasPrice);
+    if (metrics.gasPriceHistory.length > ADAPTIVE_CONFIG.COST_THRESHOLDS.GAS_PRICE_HISTORY_SIZE) {
+      metrics.gasPriceHistory.shift();
+    }
+  }
+  
+  // Cập nhật max observed gas
+  if (chain.load > 0) {
+    const estimatedGasUsage = chain.load * 100000; // Ước tính gas usage
+    metrics.maxObservedGas = Math.max(metrics.maxObservedGas, estimatedGasUsage);
+    metrics.currentGasUsage = estimatedGasUsage;
+  }
+}
+
+// 7. Hàm track transaction results
+function trackTransactionResult(relay, success, gasUsed = 0) {
+  const metrics = relay.adaptiveMetrics;
+  const currentTime = Date.now();
+  
+  if (success) {
+    metrics.successHistory.push(currentTime);
+    metrics.consecutiveFailures = 0;
+  } else {
+    metrics.failureHistory.push(currentTime);
+    metrics.consecutiveFailures++;
+    metrics.lastFailureTime = currentTime;
+  }
+  
+  // Clean old history (giữ 24 giờ)
+  const oneDayAgo = currentTime - 86400000;
+  metrics.successHistory = metrics.successHistory.filter(time => time > oneDayAgo);
+  metrics.failureHistory = metrics.failureHistory.filter(time => time > oneDayAgo);
+  
+  // Cập nhật max observed gas
+  if (gasUsed > 0) {
+    metrics.maxObservedGas = Math.max(metrics.maxObservedGas, gasUsed);
+  }
+}
+
+function computeWeight(relay) {
+  const perf = relay.adaptiveMetrics.performanceScore || 0.8;
+  const cost = relay.adaptiveMetrics.costEfficiency || 0.8;
+  const reliab = 1.0 - Math.min(relay.adaptiveMetrics.failureRate || 0.1, 1.0);
+  const latency = relay.adaptiveMetrics.avgLatency || 300;
+
+  // ⚖️ Thang điểm latency: latency thấp → điểm cao (nhưng bóp giới hạn lại)
+  const latencyScore = Math.max(0.1, Math.min(1.0, 150 / latency));
+
+  // 🧠 Tổng điểm: bạn có thể điều chỉnh trọng số theo ý đồ
+  const rawScore = (
+    perf * 0.45 +        // hiệu năng: ưu tiên chính
+    cost * 0.2 +         // chi phí
+    reliab * 0.2 +       // độ tin cậy
+    latencyScore * 0.15  // độ trễ
+  );
+
+  // 🎯 Scale về trọng số 1–5
+  const scaled = Math.round(rawScore * 5);
+  const weight = Math.min(5, Math.max(1, scaled));
+
+  relay.weight = weight;
+
+  // 🧪 Debug log nếu cần
+  // console.log(`${relay.name}: perf=${perf.toFixed(2)}, cost=${cost.toFixed(2)}, reliab=${reliab.toFixed(2)}, latencyScore=${latencyScore.toFixed(2)} → weight=${weight}`);
+
+  return weight;
+}
+
+module.exports = {
+  updateAdaptiveProperties,
+  trackTransactionResult,
+  updateHistoricalData,
+  calculateAdaptiveSecurityLevel,
+  calculateAdaptiveProcessingSpeed,
+  calculateAdaptiveCostTier,
+  calculateAdaptiveMaxGasLimit,
+  ADAPTIVE_CONFIG,
+  computeWeight
+};
+
+
+```
+
+### relay-algorithms\hybridAdaptive.js
+```js
+const { ethers } = require("hardhat");
+const { selectRelay_WLC } = require('./wlc'); 
+
+// 🏆 Ranking mappings
+const SECURITY_LEVELS = { High: 3, Medium: 2, Low: 1 };
+const PROCESSING_SPEEDS = { Fast: 3, Normal: 2, Slow: 1 };
+const COST_TIERS = { Premium: 3, Standard: 2, Economy: 1 };
+
+// ⚙️ Trọng số Hybrid Adaptive
+const HYBRID_WEIGHTS = {
+    LOAD: 0.25,
+    LATENCY: 0.20,
+    SUCCESS_RATE: 0.25,
+    GAS_PRICE: 0.15,
+    CONGESTION: 0.15,
+    RELIABILITY: 0.10
+};
+
+// 🎯 Bộ lọc theo chủ đề giao dịch
+function filterRelaysByTopic(transactionType, requirements, relays) {
+    const req = requirements[transactionType];
+    if (!req) throw new Error(`❌ Unknown transaction type: ${transactionType}`);
+
+    const eligibleRelays = relays.filter(relay => {
+        if (!relay.healthy) return false;
+
+        const cap = relay.capabilities;
+        const securityOK = SECURITY_LEVELS[cap.securityLevel] >= SECURITY_LEVELS[req.minSecurityLevel];
+        const speedOK = PROCESSING_SPEEDS[cap.processingSpeed] >= PROCESSING_SPEEDS[req.minProcessingSpeed];
+        const costOK = COST_TIERS[cap.costTier] <= COST_TIERS[req.maxCostTier];
+        const tokenOK = req.requiredTokens.some(t => cap.supportedTokens.includes(t));
+        const typeOK = req.requiredTypes.some(t => cap.transactionTypes.includes(t));
+        const gasOK = cap.maxGasLimit >= req.minGasLimit;
+
+        return securityOK && speedOK && costOK && tokenOK && typeOK && gasOK;
+    });
+
+    console.log(`🔍 Topic-based filtering for ${transactionType}: ${eligibleRelays.length}/${relays.length} eligible`);
+    return eligibleRelays;
+}
+
+// 🧠 Tính điểm với normalize động
+function computeAdvancedResourceScore(relay, allRelays, transactionType, requirements, calculateSuccessRate) {
+    const req = requirements[transactionType];
+
+    // Normalize động
+    const maxLoad = Math.max(...allRelays.map(r => r.load), 1);
+    const maxLatency = Math.max(...allRelays.map(r => r.latency), 1);
+    const maxGas = Math.max(...allRelays.map(r => r.gasPrice), 1);
+    const maxCongestion = Math.max(...allRelays.map(r => r.networkCongestion), 1);
+
+    const normalizedLoad = relay.load / maxLoad;
+    const normalizedLatency = relay.latency / maxLatency;
+    const normalizedGasPrice = relay.gasPrice / maxGas;
+    const normalizedCongestion = relay.networkCongestion / maxCongestion;
+    const successRate = calculateSuccessRate(relay);
+    const reliability = relay.performance.reliabilityScore || 1.0;
+
+    // Ưu tiên theo priority
+    const priorityMultiplier = {
+        High: 1.5,
+        Medium: 1.2,
+        Low: 1.0
+    }[req.priority] || 1.0;
+
+    const score =
+        HYBRID_WEIGHTS.LOAD * (1 - normalizedLoad) +
+        HYBRID_WEIGHTS.LATENCY * (1 - normalizedLatency) +
+        HYBRID_WEIGHTS.SUCCESS_RATE * successRate +
+        HYBRID_WEIGHTS.GAS_PRICE * (1 - normalizedGasPrice) +
+        HYBRID_WEIGHTS.CONGESTION * (1 - normalizedCongestion) +
+        HYBRID_WEIGHTS.RELIABILITY * reliability;
+
+    return score * priorityMultiplier;
+}
+
+// 🏆 Hàm chọn relay chính
+function selectRelay_HybridAdaptive(relays, transactionType, requirements, calculateSuccessRate) {
+    console.log(`\n🎯 Hybrid Adaptive Selection for ${transactionType}`);
+
+    const eligible = filterRelaysByTopic(transactionType, requirements, relays);
+    if (eligible.length === 0) 
+      return null;
+
+    let bestRelay = null;
+    let bestScore = -Infinity;
+
+    console.log(`⚖️  Scoring ${eligible.length} eligible relays:`);
+
+    for (const relay of eligible) {
+        const score = computeAdvancedResourceScore(relay, eligible, transactionType, requirements, calculateSuccessRate);
+        const successRate = calculateSuccessRate(relay);
+
+        console.log(`   - ${relay.name}:`);
+        console.log(`     Load=${relay.load}, Latency=${relay.latency}ms, Success=${(successRate * 100).toFixed(1)}%`);
+        console.log(`     Gas=${ethers.formatUnits(relay.gasPrice, 'gwei')} gwei, Congestion=${(relay.networkCongestion * 100).toFixed(1)}%`);
+        console.log(`     Score=${score.toFixed(3)}`);
+
+        if (score > bestScore) {
+            bestScore = score;
+            bestRelay = relay;
+        }
+    }
+
+    console.log(`🏆 Selected: ${bestRelay.name} (score=${bestScore.toFixed(3)})`);
+    return bestRelay;
+}
+
+// 📈 Cập nhật hiệu suất
+async function updatePerformanceMetrics(relays, calculateSuccessRate) {
+    for (const r of relays) {
+        if (!r.healthy) continue;
+
+        try {
+            if (r.historicalLatency.length > 0) {
+                const avg = r.historicalLatency.reduce((a, b) => a + b, 0) / r.historicalLatency.length;
+                r.performance.avgProcessingTime = avg;
+            }
+
+            const successRate = calculateSuccessRate(r);
+            r.performance.reliabilityScore = successRate;
+
+            const normalizedGas = Math.min(r.gasPrice / 50000000000, 1.0);
+            r.performance.costEfficiency = 1 - normalizedGas;
+        } catch (e) {
+            console.error(`⚠️ Error updating performance for ${r.name}: ${e.message}`);
+        }
+    }
+}
+
+module.exports = {
+    selectRelay_HybridAdaptive,
+    filterRelaysByTopic,
+    computeAdvancedResourceScore,
+    updatePerformanceMetrics
+};
+
+```
+
+### relay-algorithms\index.js
+```js
+module.exports = {
+    ...require('./roundRobin'),
+    ...require('./wlc'),
+    ...require('./resourceBased'),
+    ...require('./hybridAdaptive'),
+    ...require('./adaptiveProperties'),
+    computeWeight: require('./adaptiveProperties').computeWeight
+};
+  
+```
+
+### relay-algorithms\resourceBased.js
+```js
+const { ethers } = require("hardhat");
+const MAX_HISTORICAL_LATENCY = 10; // Số lượng latency history để lưu
+
+// ⚙️ Tham số Resource-Based Selection
+const RESOURCE_WEIGHTS = {
+    LOAD: 0.25,           // Trọng số cho tải
+    LATENCY: 0.20,        // Trọng số cho độ trễ
+    SUCCESS_RATE: 0.25,   // Trọng số cho tỷ lệ thành công
+    GAS_PRICE: 0.15,      // Trọng số cho giá gas
+    CONGESTION: 0.15      // Trọng số cho tắc nghẽn mạng
+};
+
+// ================= Resource-Based Selection =================
+function calculateSuccessRate(relay) {
+    if (relay.totalRequests === 0) return 1.0;
+    return relay.successCount / relay.totalRequests;
+}
+
+async function updateResourceInfo(relays, maxLatencyHistory = 10) {
+    for (const chain of relays) {
+        if (!chain.healthy) continue;
+        
+        try {
+            // Cập nhật gas price
+            const feeData = await chain.provider.getFeeData();
+            console.log(`[${chain.name}] feeData =`, feeData);
+            chain.gasPrice = Number(feeData.gasPrice);
+            
+            // Cập nhật block time
+            const currentBlock = await chain.provider.getBlockNumber();
+            const block = await chain.provider.getBlock(currentBlock);
+            let blockTime = 0;
+            if (currentBlock > 0) {
+                const prevBlock = await chain.provider.getBlock(currentBlock - 1);
+                blockTime = block.timestamp - prevBlock.timestamp;
+            }
+            chain.blockTime = blockTime;
+            
+            // Cập nhật network congestion (dựa trên gas price)
+            chain.networkCongestion = Math.min(chain.gasPrice / 20000000000, 1.0); // Normalize
+            
+            // Cập nhật historical latency
+            chain.historicalLatency.push(chain.latency);
+            if (chain.historicalLatency.length > MAX_HISTORICAL_LATENCY) {
+                chain.historicalLatency.shift();
+            }
+        
+            // Cập nhật min/max latency
+            chain.maxLatency = Math.max(chain.maxLatency, chain.latency);
+            chain.minLatency = Math.min(chain.minLatency, chain.latency);
+        
+        } catch (error) {
+            console.error(`Error updating resource info for ${chain.name}:`, error.message);
+        }
+    }
+}
+  
+function computeResourceScore(relay, allRelays) {
+    // Tìm giá trị max thực tế từ tất cả relay
+    const maxLoad = Math.max(...allRelays.map(r => r.load), 1);
+    const maxLatency = Math.max(...allRelays.map(r => r.latency), 1);
+    const maxGasPrice = Math.max(...allRelays.map(r => r.gasPrice), 1);
+    const maxCongestion = Math.max(...allRelays.map(r => r.networkCongestion), 1);
+
+    // Normalize dựa trên max thực tế (tránh chia 0)
+    const normalizedLoad = relay.load / maxLoad;
+    const normalizedLatency = relay.latency / maxLatency;
+    const normalizedGasPrice = relay.gasPrice / maxGasPrice;
+    const normalizedCongestion = relay.networkCongestion / maxCongestion;
+    const successRate = calculateSuccessRate(relay); // giữ nguyên
+
+    // Tính điểm tổng hợp
+    const score = 
+        RESOURCE_WEIGHTS.LOAD * (1 - normalizedLoad) +
+        RESOURCE_WEIGHTS.LATENCY * (1 - normalizedLatency) +
+        RESOURCE_WEIGHTS.SUCCESS_RATE * successRate +
+        RESOURCE_WEIGHTS.GAS_PRICE * (1 - normalizedGasPrice) +
+        RESOURCE_WEIGHTS.CONGESTION * (1 - normalizedCongestion);
+
+    return score;
+}
+
+  
+function selectRelay_ResourceBased(relays) {
+    const healthy = relays.filter(r => r.healthy);
+    if (healthy.length === 0) throw new Error("❌ No healthy relay available.");
+
+    let bestRelay = null;
+    let bestScore = -1;
+
+    console.log("🔍 Resource-Based Selection Analysis:");
+
+    for (const relay of healthy) {
+        const score = computeResourceScore(relay, healthy);
+        const successRate = calculateSuccessRate(relay);
+        
+        console.log(`   - ${relay.name}:`);
+        console.log(`     Load: ${relay.load} | Latency: ${relay.latency}ms | Success Rate: ${(successRate * 100).toFixed(1)}%`);
+        console.log(`     Gas Price: ${ethers.formatUnits(relay.gasPrice, 'gwei')} gwei | Congestion: ${(relay.networkCongestion * 100).toFixed(1)}%`);
+        console.log(`     Resource Score: ${score.toFixed(3)}`);
+        
+        if (score > bestScore) {
+            bestScore = score;
+            bestRelay = relay;
+        }
+    }
+
+    return bestRelay;
+}
+
+
+module.exports = {
+    selectRelay_ResourceBased,
+    calculateSuccessRate,
+    updateResourceInfo,
+    computeResourceScore
+};
+```
+
+### relay-algorithms\roundRobin.js
+```js
+let wrrIndex = 0;
+let expandedList = [];
+
+function expandRelaysByWeight(relays) {
+  const list = [];
+  for (const r of relays) {
+    if (!r.healthy) continue;
+    const w = r.weight || 1;
+    for (let i = 0; i < w; i++) list.push(r);
+  }
+  return list;
+}
+
+function selectRelay_WeightedRoundRobin(relays) {
+  expandedList = expandRelaysByWeight(relays);
+  if (!expandedList.length) throw new Error("❌ No healthy relay available.");
+  
+  const selected = expandedList[wrrIndex % expandedList.length];
+  wrrIndex = (wrrIndex + 1) % expandedList.length;
+  return selected;
+}
+
+module.exports = { selectRelay_WeightedRoundRobin };
+
+```
+
+### relay-algorithms\wlc.js
+```js
+const { computeWeight } = require('./adaptiveProperties');
+
+// ⚙️ Tham số điều chỉnh thuật toán
+const BETA = 0.01; // Tầm ảnh hưởng của latency
+
+// ✅ Hàm chọn relay theo Weighted Least Connections
+function selectRelay_WLC(relays) {
+    const healthy = relays.filter(r => r.healthy);
+    if (healthy.length === 0) throw new Error("❌ No healthy relay available.");
+
+    let bestRelay = null;
+    let bestScore = Infinity;
+
+    for (const relay of healthy) {
+        const weight = computeWeight(relay) || 1; // tránh chia 0
+        const score = (relay.load / weight) + BETA * relay.latency;
+
+        if (score < bestScore) {
+            bestScore = score;
+            bestRelay = relay;
+        }
+
+        console.log(`   - ${relay.name}: Load=${relay.load}, Weight=${weight}, Latency=${relay.latency}ms, Score=${score.toFixed(3)}`);
+    }
+
+    if (!bestRelay) throw new Error("❌ No suitable relay selected by WLC.");
+
+    return bestRelay;
+}
+
+// 🛰️ Hàm đo độ trễ thực tế giữa app và các relay
+async function updateLatencies(relays) {
+    for (const chain of relays) {
+        const start = Date.now();
+        try {
+            await chain.provider.getBlockNumber();
+            chain.latency = Date.now() - start;
+            chain.healthy = true;
+        } catch {
+            chain.latency = Infinity;
+            chain.healthy = false;
+        }
+    }
+}
+
+module.exports = { selectRelay_WLC, updateLatencies };
+
+```
+
+### script\deploy-dc.js
+```js
 async function main() {
-  const [deployer] = await hre.ethers.getSigners();
-  console.log("Deploying contracts with the account:", deployer.address);
+  const TargetReceiver = await ethers.getContractFactory("TargetReceiver");
+  const receiver = await TargetReceiver.deploy();
+  await receiver.waitForDeployment();
 
-  const relayRegistry = await hre.ethers.deployContract("RelayRegistry");
-  await relayRegistry.waitForDeployment();
+    const fs = require("fs");
+    const path = "./deployments/destinationChain";
+    fs.mkdirSync(path, { recursive: true });
+    fs.writeFileSync(
+    `${path}/TargetReceiver.json`,
+    JSON.stringify({ address: await receiver.getAddress() }, null, 2)
+    );
 
-  console.log(`RelayRegistry deployed to: ${relayRegistry.target}`);
-
-  const fs = require('fs');
-  fs.writeFileSync('./registry-address.json', JSON.stringify({ address: relayRegistry.target }));
+  console.log("✅ TargetReceiver deployed at:", await receiver.getAddress());
 }
 
 main().catch((error) => {
@@ -100,30 +904,692 @@ main().catch((error) => {
 
 ```
 
-### script\stimulation.js
+### script\deploy-source.js
 ```js
-const { ethers } = require("hardhat");
-const registryAddress = require('../registry-address.json').address;
+const hre = require("hardhat");
 
-const RELAY_CHAINS = [
-  { name: 'RelayChain1', url: 'http://127.0.0.1:8545', load: 0 },
-  { name: 'RelayChain2', url: 'http://127.0.0.1:8546', load: 0 },
-  { name: 'RelayChain3', url: 'http://127.0.0.1:8547', load: 0 },
-];
+async function main() {
+  const SourceApp = await hre.ethers.getContractFactory("SourceApp");
+  const app = await SourceApp.deploy();
 
-let currentRelayIndex = 0;
-function selectRelay_RoundRobin() {
-  const selected = RELAY_CHAINS[currentRelayIndex];
-  currentRelayIndex = (currentRelayIndex + 1) % RELAY_CHAINS.length;
-  return selected;
+  await app.waitForDeployment();
+    const fs = require("fs");
+    const path = "./deployments/sourceChain";
+    fs.mkdirSync(path, { recursive: true });
+    fs.writeFileSync(
+      `${path}/SourceApp.json`,
+      JSON.stringify({ address: await app.getAddress() }, null, 2)
+  );
+  console.log(`✅ SourceApp deployed at ${await app.getAddress()}`);
+  
+
 }
 
-function selectRelay_LeastLoad() {
-  return RELAY_CHAINS.reduce((prev, curr) => (prev.load < curr.load ? prev : curr));
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+
+```
+
+### script\deploy.js
+```js
+const hre = require("hardhat");
+const fs = require("fs");
+
+async function main() {
+  const [deployer] = await hre.ethers.getSigners();
+  console.log("Deploying contracts with the account:", deployer.address);
+
+  const relayRegistry = await hre.ethers.deployContract("RelayRegistry");
+  await relayRegistry.waitForDeployment();
+
+  const address = await relayRegistry.getAddress();
+  console.log(`RelayRegistry deployed to: ${address}`);
+
+  // Ghi đúng vào thư mục theo tên mạng
+  const networkName = hre.network.name;
+  const path = `./deployments/${networkName}`;
+  fs.mkdirSync(path, { recursive: true });
+  fs.writeFileSync(`${path}/RelayRegistry.json`, JSON.stringify({ address }, null, 2));
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+
+```
+
+### script\prover-rc2dc.js
+```js
+// prover-rc2dc.js
+require("dotenv").config();
+console.log("PRIVATE_KEY loaded:", process.env.PRIVATE_KEY);
+
+const { ethers } = require("ethers");
+const { generateProof } = require("./prover");
+const RelayRegistryABI = require("../artifacts/contracts/RelayRegistry.sol/RelayRegistry.json").abi;
+const TargetReceiverABI = require("../artifacts/contracts/TargetReceiver.sol/TargetReceiver.json").abi;
+const registryAddresses = {
+  8545: require("./deployments/relayChain1/RelayRegistry.json").address,
+  8546: require("./deployments/relayChain2/RelayRegistry.json").address,
+  8547: require("./deployments/relayChain3/RelayRegistry.json").address,
+};
+
+const targetReceiverAddress = require("./deployments/destinationChain/TargetReceiver.json").address;
+
+const RC_PORTS = [8545, 8546, 8547];
+const dcProvider = new ethers.JsonRpcProvider("http://127.0.0.1:8549");
+const dcSigner = new ethers.Wallet(process.env.PRIVATE_KEY, dcProvider);
+const receiver = new ethers.Contract(targetReceiverAddress, TargetReceiverABI, dcSigner);
+
+async function main() {
+  console.log("🔍 Listening for RelayedFromSource events from all RCs...");
+
+  for (const port of RC_PORTS) {
+    const rcProvider = new ethers.JsonRpcProvider(`http://127.0.0.1:${port}`);
+    const registryAddr = registryAddresses[port];
+    const relaySigner = new ethers.Wallet(process.env.PRIVATE_KEY, rcProvider);
+    const registry = new ethers.Contract(registryAddr, RelayRegistryABI, relaySigner);
+
+
+    registry.on("RelayedFromSource", async (from, target, data, proofHash, event) => {
+      console.log(`\n📦 Event from RC[${port}] to DC: target=${target}`);
+
+      const ctx = {
+        source: from,
+        target,
+        value: 0,
+        nonce: event.logIndex + port // tránh trùng nonce giữa các RC
+      };
+
+      const proof = await generateProof(ctx, "RC2DC");
+
+      try {
+        const tx = await receiver.receiveRelay(from, data, proof.proofHash);
+        await tx.wait();
+        console.log(`✅ Relayed from RC[${port}] → DC: tx=${tx.hash}`);
+      } catch (e) {
+        console.error(`❌ Failed from RC[${port}]:`, e.message);
+      }
+    });
+  }
+}
+
+main();
+```
+
+### script\prover-sc2rc.js
+```js
+// prover-sc2rc.js
+require("dotenv").config();
+console.log("PRIVATE_KEY loaded:", process.env.PRIVATE_KEY);
+
+const { ethers } = require("ethers");
+const { generateProof } = require("./prover");
+const {
+  selectRelay_HybridAdaptive,
+  updateLatencies,
+  updateResourceInfo,
+  updatePerformanceMetrics,
+  updateAdaptiveProperties,
+  calculateSuccessRate,
+  computeWeight
+} = require("../relay-algorithms");
+
+const SourceAppABI = require("../artifacts/contracts/SourceApp.sol/SourceApp.json").abi;
+const RelayRegistryABI = require("../artifacts/contracts/RelayRegistry.sol/RelayRegistry.json").abi;
+const registryAddresses = {
+  RelayChain1: require("./deployments/relayChain1/RelayRegistry.json").address,
+  RelayChain2: require("./deployments/relayChain2/RelayRegistry.json").address,
+  RelayChain3: require("./deployments/relayChain3/RelayRegistry.json").address
+};
+
+const sourceAppAddress = require("./deployments/sourceChain/SourceApp.json").address;
+
+const sourceProvider = new ethers.JsonRpcProvider("http://127.0.0.1:8548"); // SC
+const signer = new ethers.Wallet(process.env.PRIVATE_KEY, sourceProvider);
+const sourceApp = new ethers.Contract(sourceAppAddress, SourceAppABI, sourceProvider);
+
+const RELAY_CHAINS = [
+  {
+    name: "RelayChain1",
+    url: "http://127.0.0.1:8545",
+    provider: new ethers.JsonRpcProvider("http://127.0.0.1:8545"),
+    healthy: true,
+    load: 0,
+    latency: 0,
+    successCount: 0,
+    totalRequests: 0,
+    gasPrice: 0,
+    blockTime: 0,
+    networkCongestion: 0,
+    historicalLatency: [],
+    maxLatency: 0,
+    minLatency: Infinity,
+    capabilities: {
+      transactionTypes: ["DeFi", "NFT"],
+      chainTypes: ["EVM"],
+      supportedTokens: ["ETH", "USDC"],
+      securityLevel: "High",
+      processingSpeed: "Fast",
+      costTier: "Premium",
+      maxGasLimit: 30000000
+    },
+    adaptiveMetrics: defaultAdaptiveMetrics(),
+    performance: defaultPerformance()
+  },
+  {
+    name: "RelayChain2",
+    url: "http://127.0.0.1:8546",
+    provider: new ethers.JsonRpcProvider("http://127.0.0.1:8546"),
+    healthy: true,
+    load: 0,
+    latency: 0,
+    successCount: 0,
+    totalRequests: 0,
+    gasPrice: 0,
+    blockTime: 0,
+    networkCongestion: 0,
+    historicalLatency: [],
+    maxLatency: 0,
+    minLatency: Infinity,
+    capabilities: {
+      transactionTypes: ["General", "Gaming"],
+      chainTypes: ["EVM", "Layer2"],
+      supportedTokens: ["ETH", "USDC", "DAI"],
+      securityLevel: "Medium",
+      processingSpeed: "Normal",
+      costTier: "Standard",
+      maxGasLimit: 20000000
+    },
+    adaptiveMetrics: defaultAdaptiveMetrics(),
+    performance: defaultPerformance()
+  },
+  {
+    name: "RelayChain3",
+    url: "http://127.0.0.1:8547",
+    provider: new ethers.JsonRpcProvider("http://127.0.0.1:8547"),
+    healthy: true,
+    load: 0,
+    latency: 0,
+    successCount: 0,
+    totalRequests: 0,
+    gasPrice: 0,
+    blockTime: 0,
+    networkCongestion: 0,
+    historicalLatency: [],
+    maxLatency: 0,
+    minLatency: Infinity,
+    capabilities: {
+      transactionTypes: ["Gaming", "General"],
+      chainTypes: ["EVM"],
+      supportedTokens: ["ETH"],
+      securityLevel: "Low",
+      processingSpeed: "Slow",
+      costTier: "Economy",
+      maxGasLimit: 15000000
+    },
+    adaptiveMetrics: defaultAdaptiveMetrics(),
+    performance: defaultPerformance()
+  }
+];
+
+function defaultAdaptiveMetrics() {
+  return {
+    failureRate: 0,
+    consecutiveFailures: 0,
+    lastFailureTime: 0,
+    securityScore: 1.0,
+    avgLatency: 0,
+    latencyVariance: 0,
+    throughput: 0,
+    performanceScore: 1.0,
+    avgGasPrice: 0,
+    gasPriceTrend: 0,
+    costEfficiency: 1.0,
+    costScore: 1.0,
+    currentGasUsage: 0,
+    maxObservedGas: 0,
+    capacityUtilization: 0,
+    capacityScore: 1.0,
+    latencyHistory: [],
+    gasPriceHistory: [],
+    failureHistory: [],
+    successHistory: []
+  };
+}
+
+function defaultPerformance() {
+  return {
+    avgProcessingTime: 0,
+    reliabilityScore: 1.0,
+    costEfficiency: 1.0
+  };
 }
 
 async function main() {
-  console.log("🚀 Starting MRC Simulation...");
+  console.log("🔍 Listening for ContextSent events from SourceApp...");
+
+  sourceApp.on("ContextSent", async (to, data, nonce, event) => {
+    console.log(`\n📦 New context from SC | nonce=${nonce}, to=${to}`);
+    const { chainId } = await sourceProvider.getNetwork();
+
+    const txObj = {
+      to,
+      data,
+      nonce: Number(nonce),
+      blockNumber: event.blockNumber,
+      chainId
+    };
+    console.log("📬 Relaying to:", to);
+    console.log("📬 Should match TargetReceiver:", require("./deployments/destinationChain/TargetReceiver.json").address);
+
+
+    const proof = await generateProof(txObj, "SC2RC");
+
+    await updateLatencies(RELAY_CHAINS);
+    await updateResourceInfo(RELAY_CHAINS);
+    await updatePerformanceMetrics(RELAY_CHAINS, calculateSuccessRate);
+    await updateAdaptiveProperties(RELAY_CHAINS);
+
+    RELAY_CHAINS.forEach(rc => rc.weight = computeWeight(rc));
+
+    const selectedRC = selectRelay_HybridAdaptive(
+      RELAY_CHAINS,
+      "General",
+      {
+        General: {
+          requiredTypes: ["General"],
+          minSecurityLevel: "Low",
+          minProcessingSpeed: "Slow",
+          maxCostTier: "Standard",
+          requiredTokens: ["ETH"],
+          minGasLimit: 100000,
+          priority: "Low"
+        }
+      },
+      calculateSuccessRate
+    );
+
+    if (!selectedRC) {
+      console.warn("❌ No suitable relay available");
+      return;
+    }
+
+    const relaySigner = new ethers.Wallet(process.env.PRIVATE_KEY, selectedRC.provider);
+    const selectedRegistryAddress = registryAddresses[selectedRC.name];
+    const registry = new ethers.Contract(selectedRegistryAddress, RelayRegistryABI, relaySigner);
+
+    try {
+      const tx = await registry.relayFromSource(to, data, proof.proofHash);
+      await tx.wait();
+      console.log(`✅ Relayed ctx[${nonce}] to ${selectedRC.name}: tx=${tx.hash}`);
+    } catch (e) {
+      console.error(`🔥 Relay failed to ${selectedRC.name}:`, e.message);
+    }
+  });
+}
+
+main();
+
+```
+
+### script\prover.js
+```js
+const { ethers } = require("ethers");
+
+// Giả lập độ trễ tạo proof (ms)
+const DEFAULT_DELAY_MS = 300;
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Sinh proof giả lập từ giao dịch
+ * @param {Object} transaction - Giao dịch từ SC hoặc RC
+ * @param {String} type - 'SC2RC' hoặc 'RC2DC'
+ * @returns {Object} - Bằng chứng gồm hash, timestamp và thời gian xử lý
+ */
+async function generateProof(transaction, type = 'SC2RC') {
+  const start = Date.now();
+
+  // Giả lập độ trễ tạo proof
+  await sleep(DEFAULT_DELAY_MS);
+
+  const proofHash = ethers.keccak256(ethers.getBytes(transaction.data));
+
+  const proof = {
+    proofHash,
+    createdAt: new Date().toISOString(),
+    elapsedMs: Date.now() - start,
+    proofType: type
+  };
+
+  return proof;
+}
+
+module.exports = {
+  generateProof
+};
+
+```
+
+### script\sendCtx.js
+```js
+// sendCtx.js
+require("dotenv").config();
+const { ethers } = require("hardhat");
+
+async function main() {
+  const [signer] = await ethers.getSigners();
+  const SourceApp = await ethers.getContractFactory("SourceApp");
+
+  // Đọc địa chỉ contract từ deploy
+  const deployed = require("./deployments/sourceChain/SourceApp.json");
+  const sourceApp = await SourceApp.attach(deployed.address);
+
+  const dummyTarget = require("./deployments/destinationChain/TargetReceiver.json").address;
+
+
+  const payload = ethers.encodeBytes32String("cross-chain-ping");
+
+  const tx = await sourceApp.sendContext(dummyTarget, payload);
+  console.log("⏳ Sending ctx...");
+  await tx.wait();
+  console.log("✅ ctx sent: ", tx.hash);
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
+
+```
+
+### script\simulation.js
+```js
+const { ethers } = require("hardhat");
+const registryAddress = require('../registry-address.json').address;
+const {
+  selectRelay_WeightedRoundRobin,
+  selectRelay_WLC,
+  selectRelay_ResourceBased,
+  selectRelay_HybridAdaptive,
+  updateLatencies,
+  calculateSuccessRate,
+  updateResourceInfo,
+  updatePerformanceMetrics,
+  updateAdaptiveProperties, 
+  trackTransactionResult,
+  computeWeight
+} = require('../relay-algorithms');
+
+
+
+// const RELAY_CHAINS = [
+//   { name: 'RelayChain1', url: 'http://127.0.0.1:8545', load: 0, latency: 0, healthy: true, provider: null, successCount: 0 },
+//   { name: 'RelayChain2', url: 'http://127.0.0.1:8546', load: 0, latency: 0, healthy: true, provider: null, successCount: 0 },
+//   { name: 'RelayChain3', url: 'http://127.0.0.1:8547', load: 0, latency: 0, healthy: true, provider: null, successCount: 0 },
+// ];
+
+const RELAY_CHAINS = [
+  { 
+    name: 'RelayChain1', 
+    url: 'http://127.0.0.1:8545', 
+    load: 0, 
+    latency: 0, 
+    healthy: true, 
+    provider: null, 
+    successCount: 0,
+    totalRequests: 0,
+    gasPrice: 0,
+    blockTime: 0,
+    networkCongestion: 0,
+    historicalLatency: [],
+    maxLatency: 0,
+    minLatency: Infinity,
+    
+    // Adaptive capabilities - sẽ được tính toán động
+    capabilities: {
+      transactionTypes: ['DeFi', 'NFT', 'Gaming', 'General'],
+      chainTypes: ['EVM', 'Layer2'],
+      supportedTokens: ['ETH', 'USDC', 'USDT', 'DAI'],
+      // Các thuộc tính adaptive - sẽ được tính toán
+      securityLevel: 'Medium', // Sẽ được tính toán
+      processingSpeed: 'Normal', // Sẽ được tính toán
+      costTier: 'Standard', // Sẽ được tính toán
+      maxGasLimit: 20000000, // Sẽ được tính toán
+    },
+    
+    // Metrics để tính toán adaptive properties
+    adaptiveMetrics: {
+      // Security metrics
+      failureRate: 0,
+      consecutiveFailures: 0,
+      lastFailureTime: 0,
+      securityScore: 1.0,
+      
+      // Performance metrics
+      avgLatency: 0,
+      latencyVariance: 0,
+      throughput: 0,
+      performanceScore: 1.0,
+      
+      // Cost metrics
+      avgGasPrice: 0,
+      gasPriceTrend: 0,
+      costEfficiency: 1.0,
+      costScore: 1.0,
+      
+      // Capacity metrics
+      currentGasUsage: 0,
+      maxObservedGas: 0,
+      capacityUtilization: 0,
+      capacityScore: 1.0,
+      
+      // Historical data
+      latencyHistory: [],
+      gasPriceHistory: [],
+      failureHistory: [],
+      successHistory: []
+    },
+    
+    performance: {
+      avgProcessingTime: 0,
+      reliabilityScore: 1.0,
+      costEfficiency: 1.0
+    }
+  },
+  { 
+    name: 'RelayChain2', 
+    url: 'http://127.0.0.1:8546', 
+    load: 0, 
+    latency: 0, 
+    healthy: true, 
+    provider: null, 
+    successCount: 0,
+    totalRequests: 0,
+    gasPrice: 0,
+    blockTime: 0,
+    networkCongestion: 0,
+    historicalLatency: [],
+    maxLatency: 0,
+    minLatency: Infinity,
+    
+    // Adaptive capabilities - sẽ được tính toán động
+    capabilities: {
+      transactionTypes: ['DeFi', 'NFT', 'Gaming', 'General'],
+      chainTypes: ['EVM', 'Layer2'],
+      supportedTokens: ['ETH', 'USDC', 'USDT', 'DAI'],
+      // Các thuộc tính adaptive - sẽ được tính toán
+      securityLevel: 'Medium', // Sẽ được tính toán
+      processingSpeed: 'Normal', // Sẽ được tính toán
+      costTier: 'Standard', // Sẽ được tính toán
+      maxGasLimit: 20000000, // Sẽ được tính toán
+    },
+    
+    // Metrics để tính toán adaptive properties
+    adaptiveMetrics: {
+      // Security metrics
+      failureRate: 0,
+      consecutiveFailures: 0,
+      lastFailureTime: 0,
+      securityScore: 1.0,
+      
+      // Performance metrics
+      avgLatency: 0,
+      latencyVariance: 0,
+      throughput: 0,
+      performanceScore: 1.0,
+      
+      // Cost metrics
+      avgGasPrice: 0,
+      gasPriceTrend: 0,
+      costEfficiency: 1.0,
+      costScore: 1.0,
+      
+      // Capacity metrics
+      currentGasUsage: 0,
+      maxObservedGas: 0,
+      capacityUtilization: 0,
+      capacityScore: 1.0,
+      
+      // Historical data
+      latencyHistory: [],
+      gasPriceHistory: [],
+      failureHistory: [],
+      successHistory: []
+    },
+    
+    performance: {
+      avgProcessingTime: 0,
+      reliabilityScore: 1.0,
+      costEfficiency: 1.0
+    }
+  },
+  { 
+    name: 'RelayChain3', 
+    url: 'http://127.0.0.1:8547', 
+    load: 0, 
+    latency: 0, 
+    healthy: true, 
+    provider: null, 
+    successCount: 0,
+    totalRequests: 0,
+    gasPrice: 0,
+    blockTime: 0,
+    networkCongestion: 0,
+    historicalLatency: [],
+    maxLatency: 0,
+    minLatency: Infinity,
+    
+    // Adaptive capabilities - sẽ được tính toán động
+    capabilities: {
+      transactionTypes: ['DeFi', 'NFT', 'Gaming', 'General'],
+      chainTypes: ['EVM', 'Layer2'],
+      supportedTokens: ['ETH', 'USDC', 'USDT', 'DAI'],
+      // Các thuộc tính adaptive - sẽ được tính toán
+      securityLevel: 'Medium', // Sẽ được tính toán
+      processingSpeed: 'Normal', // Sẽ được tính toán
+      costTier: 'Standard', // Sẽ được tính toán
+      maxGasLimit: 20000000, // Sẽ được tính toán
+    },
+    
+    // Metrics để tính toán adaptive properties
+    adaptiveMetrics: {
+      // Security metrics
+      failureRate: 0,
+      consecutiveFailures: 0,
+      lastFailureTime: 0,
+      securityScore: 1.0,
+      
+      // Performance metrics
+      avgLatency: 0,
+      latencyVariance: 0,
+      throughput: 0,
+      performanceScore: 1.0,
+      
+      // Cost metrics
+      avgGasPrice: 0,
+      gasPriceTrend: 0,
+      costEfficiency: 1.0,
+      costScore: 1.0,
+      
+      // Capacity metrics
+      currentGasUsage: 0,
+      maxObservedGas: 0,
+      capacityUtilization: 0,
+      capacityScore: 1.0,
+      
+      // Historical data
+      latencyHistory: [],
+      gasPriceHistory: [],
+      failureHistory: [],
+      successHistory: []
+    },
+    
+    performance: {
+      avgProcessingTime: 0,
+      reliabilityScore: 1.0,
+      costEfficiency: 1.0
+    }
+  }
+];
+
+
+// 🎯 Transaction Requirements - có thể thay đổi theo từng transaction
+const TRANSACTION_REQUIREMENTS = {
+  // Requirements cho DeFi transaction
+  DeFi: {
+    requiredTypes: ['DeFi'],
+    minSecurityLevel: 'Medium',
+    minProcessingSpeed: 'Normal',
+    maxCostTier: 'Premium',
+    requiredTokens: ['ETH', 'USDC', 'USDT'],
+    minGasLimit: 500000,
+    priority: 'High'
+  },
+  
+  // Requirements cho NFT transaction
+  NFT: {
+    requiredTypes: ['NFT'],
+    minSecurityLevel: 'Medium',
+    minProcessingSpeed: 'Normal',
+    maxCostTier: 'Standard',
+    requiredTokens: ['ETH'],
+    minGasLimit: 300000,
+    priority: 'Medium'
+  },
+  
+  // Requirements cho Gaming transaction
+  Gaming: {
+    requiredTypes: ['Gaming'],
+    minSecurityLevel: 'Low',
+    minProcessingSpeed: 'Normal',
+    maxCostTier: 'Economy',
+    requiredTokens: ['ETH'],
+    minGasLimit: 200000,
+    priority: 'Low'
+  },
+  
+  // Requirements cho General transaction
+  General: {
+    requiredTypes: ['General'],
+    minSecurityLevel: 'Low',
+    minProcessingSpeed: 'Slow',
+    maxCostTier: 'Economy',
+    requiredTokens: ['ETH'],
+    minGasLimit: 100000,
+    priority: 'Low'
+  }
+};
+
+async function main() {
+  console.log("🚀 Starting MRC Simulation ...");
+  let fallbackCount = 0
 
   for (const chain of RELAY_CHAINS) {
     try {
@@ -131,51 +1597,108 @@ async function main() {
       await chain.provider.getNetwork();
       console.log(`✅ Connected to ${chain.name}`);
     } catch (e) {
-      console.error(`❌ Failed to connect to ${chain.name}. Is the node running?`);
-      RELAY_CHAINS.splice(RELAY_CHAINS.indexOf(chain), 1);
+      console.error(`❌ Could not connect to ${chain.name}: ${e.message}`);
+      chain.healthy = false;
     }
   }
 
-  if (RELAY_CHAINS.length === 0) {
-    console.error("No relay chains available. Exiting.");
+  const healthyRelays = RELAY_CHAINS.filter(r => r.healthy);
+  if (healthyRelays.length === 0) {
+    console.error("❌ No healthy relay chains available. Exiting.");
     return;
   }
 
-  const mainProvider = RELAY_CHAINS[0].provider;
+  const mainProvider = healthyRelays[0].provider;
   const registry = await ethers.getContractAt("RelayRegistry", registryAddress, await mainProvider.getSigner());
   console.log(`\n🔗 Connected to RelayRegistry at ${registryAddress}`);
 
   const SOURCE_CHAIN_ID = "SourceChain-A";
   const NUM_TRANSACTIONS = 20;
-  console.log(`\n🔄 Simulating ${NUM_TRANSACTIONS} cross-chain transactions from ${SOURCE_CHAIN_ID}...\n`);
+  const useWLC = false; 
+  const useResourceBased = false;
+  const useHybridAdaptive = true;
+  const transactionTypes = ['DeFi', 'NFT', 'Gaming', 'General'];
+
+  console.log(`\n🔄 Simulating ${NUM_TRANSACTIONS} cross-chain transactions using ${useWLC ? 'WLC' : useResourceBased ? 'Resource-Based' : useHybridAdaptive ? 'Hybrid Adaptive' : 'Round Robin'}...\n`);
 
   for (let i = 1; i <= NUM_TRANSACTIONS; i++) {
     console.log(`--- Transaction #${i} ---`);
 
-    const selectedRelay = selectRelay_LeastLoad(); // hoặc selectRelay_RoundRobin();
+    // Chọn ngẫu nhiên transaction type
+    const transactionType = transactionTypes[Math.floor(Math.random() * transactionTypes.length)];
+    console.log(`📋 Transaction Type: ${transactionType}`);
 
-    console.log(`⚖️  Load Balancer selected: ${selectedRelay.name} (current load: ${selectedRelay.load})`);
+    await updateLatencies(RELAY_CHAINS);
+    await updateResourceInfo(RELAY_CHAINS);
+    await updatePerformanceMetrics(RELAY_CHAINS, calculateSuccessRate);
+    await updateAdaptiveProperties(RELAY_CHAINS); 
+
+        
+    for (const chain of RELAY_CHAINS) {
+      const weight = computeWeight(chain);
+      console.log(`⚖️  ${chain.name} - Computed Weight: ${weight}`);
+    }
+
+    let selectedRelay;
+    try {
+      if (useHybridAdaptive) {
+        selectedRelay = selectRelay_HybridAdaptive(RELAY_CHAINS, transactionType, TRANSACTION_REQUIREMENTS, calculateSuccessRate);
+  
+        if (!selectedRelay) {
+          console.warn(`⚠️ No eligible relays found for ${transactionType}, falling back to WLC...`);
+          selectedRelay = selectRelay_WLC(RELAY_CHAINS);
+          fallbackCount++;
+        }
+      } else if (useResourceBased) {
+        selectedRelay = selectRelay_ResourceBased(RELAY_CHAINS);
+      } else if (useWLC) {
+        selectedRelay = selectRelay_WLC(RELAY_CHAINS);
+      } else {
+        selectedRelay = selectRelay_WeightedRoundRobin(RELAY_CHAINS);
+      }      
+    } catch (e) {
+      console.error("❌ No suitable relay at this time.");
+      continue;
+    }
+
+    console.log(`⚖️  Selected: ${selectedRelay.name} | Load: ${selectedRelay.load} | Latency: ${selectedRelay.latency}ms`);
+    console.log(`   Adaptive Properties: ${selectedRelay.capabilities.securityLevel}/${selectedRelay.capabilities.processingSpeed}/${selectedRelay.capabilities.costTier}`);
+
 
     try {
+      selectedRelay.load++; // tăng khi bắt đầu
+      selectedRelay.totalRequests++; 
+
       const signer = await selectedRelay.provider.getSigner();
       const tx = await signer.sendTransaction({
         to: signer.address,
         value: ethers.parseEther("0.001")
       });
-      await tx.wait();
-      console.log(`📬 Proof for tx #${i} submitted to ${selectedRelay.name}. Tx hash: ${tx.hash}`);
-      selectedRelay.load++;
-    } catch (e) {
-      console.error(`🔥 Error submitting proof to ${selectedRelay.name}: ${e.message}`);
-    }
 
+      await tx.wait();
+      selectedRelay.successCount++;
+
+      // Track successful transaction
+      trackTransactionResult(selectedRelay, true, 21000); // Ước tính gas used
+
+      console.log(`📬 Tx #${i} sent to ${selectedRelay.name}: ${tx.hash}`);
+    } catch (e) {
+      console.error(`🔥 Error with ${selectedRelay.name}: ${e.message}`);
+      selectedRelay.healthy = false;
+      // Track failed transaction
+      trackTransactionResult(selectedRelay, false);
+    } finally {
+      selectedRelay.load--; // giảm khi hoàn tất
+    }
     await new Promise(resolve => setTimeout(resolve, 500));
   }
 
-  console.log("\n--- SIMULATION COMPLETE ---");
-  console.log("📊 Final Load Distribution:");
+  console.log("\n✅ SIMULATION COMPLETE");
+  if (useHybridAdaptive)
+    console.log(`🚨 Total Fallbacks to WLC: ${fallbackCount} / ${NUM_TRANSACTIONS}`);
+  console.log("📊 Final Relay Stats:");
   RELAY_CHAINS.forEach(chain => {
-    console.log(`  - ${chain.name}: ${chain.load} transactions`);
+    console.log(`  - ${chain.name}: Success=${chain.successCount} tx | Latency=${chain.latency}ms | Healthy=${chain.healthy}`);
   });
 }
 
